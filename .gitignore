@@ -1,0 +1,14 @@
+# 忽略虚拟环境目录
+VENV/
+venv/
+.env/
+*.venv/
+
+# 忽略Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 忽略其他可能生成的文件
+*.egg-info/
+*.log
