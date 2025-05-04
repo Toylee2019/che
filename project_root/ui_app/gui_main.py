@@ -1,12 +1,15 @@
-import sys, os
+# ui_app/gui_main.py
+
+import sys
+import os
+import logging
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QComboBox,
     QPushButton, QTextEdit, QListWidget, QListWidgetItem, QFileDialog,
-    QVBoxLayout, QHBoxLayout, QTabWidget, QSplitter
+    QVBoxLayout, QHBoxLayout, QTabWidget, QSplitter, QMessageBox
 )
 from PyQt6.QtCore import Qt
 from ui_utils import apply_dark_theme, apply_light_theme
-from format_utils import format_question_preview
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -36,6 +39,7 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
+        # 第一行：工种名称 + 级别
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("工种名称："))
         self.job_input = QLineEdit()
@@ -45,6 +49,7 @@ class MainWindow(QMainWindow):
         self.level_combo.addItems(["初级工", "中级工", "高级工", "技师", "高级技师"])
         row1.addWidget(self.level_combo)
 
+        # 第二行：主题切换、选择文件、解析、清除日志、导出、上传
         row2 = QHBoxLayout()
         self.theme_btn = QPushButton("🌙")
         self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -83,6 +88,7 @@ class MainWindow(QMainWindow):
         upload_btn.clicked.connect(self.upload_to_server_placeholder)
         row2.addWidget(upload_btn)
 
+        # 日志输出区
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
 
@@ -98,9 +104,6 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         self.question_list = QListWidget()
-        self.question_list.setWordWrap(True)
-        self.question_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.question_list.itemClicked.connect(self.show_question_details)
         splitter.addWidget(self.question_list)
 
         self.question_preview = QTextEdit()
@@ -111,76 +114,102 @@ class MainWindow(QMainWindow):
         return tab
 
     def select_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
+        path, _ = QFileDialog.getOpenFileName(
             self, "选择试卷文件", "", "Word 文档 (*.docx)"
         )
-        if file_path:
-            self.selected_file = file_path
-            self.file_label.setText(os.path.basename(file_path))
-            self.log_output.append(f"[INFO] 已选择文件：{file_path}")
-        else:
-            self.selected_file = ""
-            self.file_label.setText("未选择文件")
+        if path:
+            self.selected_file = path
+            self.file_label.setText(os.path.basename(path))
+            self.log_output.append(f"[INFO] 已选择文件：{path}")
 
     def start_parsing(self):
         if not self.selected_file:
             self.log_output.append("[ERROR] 未选择文件")
             return
+
+        from database.db_manager import (
+            init_db, get_job_id, get_level_id,
+            has_questions, count_questions, delete_questions_by_level
+        )
+
+        # 1. 确保数据库和表创建完成
+        init_db()
+
+        job_name = self.job_input.text().strip()
+        level_text = self.level_combo.currentText().strip()
+        if not job_name:
+            self.log_output.append("[ERROR] 请先输入工种名称")
+            return
+
+        job_id = get_job_id(job_name)
+        level_id = get_level_id(job_id, level_text)
+
+        # 2. 如果已有旧题库，提示删除并打印删除前后数量
+        if has_questions(level_id):
+            old_cnt = count_questions(level_id)
+            reply = QMessageBox.question(
+                self,
+                "确认删除旧题库",
+                f"{job_name} 工种已有 {level_text} 级别题库（共 {old_cnt} 题），删除后才能上传新题库，是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.log_output.append("[INFO] 用户取消上传新题库")
+                return
+            delete_questions_by_level(level_id)
+            new_cnt = count_questions(level_id)
+            self.log_output.append(
+                f"[INFO] 已删除旧题库：共删除 {old_cnt - new_cnt} 题（原 {old_cnt} 题，现 {new_cnt} 题）"
+            )
+
+        # 3. 调用解析流程
         try:
             from parse_manager import process_document
-            results = process_document(self.selected_file)
+            results = process_document(self.selected_file, level_id)
             if results is None:
                 self.log_output.append("[ERROR] 解析失败，请查看日志文件")
                 return
-            self.question_list.clear()
-            index = 1
-            for key, lst in results.items():
-                for q in lst:
-                    q["类别"] = key
-                    display_text = q.get("question_text", "").strip()
-                    if not display_text:
-                        display_text = "（未提取题干）"
-                    item = QListWidgetItem(f"{index}. {q.get('code', '')} - {display_text[:50]}")
-                    item.setData(Qt.ItemDataRole.UserRole, q)
-                    self.question_list.addItem(item)
-                    index += 1
-            self.update_log_from_file()
+
+            type_map = {
+                "single_choice": "单项选择题",
+                "multiple_choice": "多项选择题",
+                "judgment": "判断题",
+                "short_answer": "简答题",
+                "calculation": "计算题"
+            }
+
+            # 4. 正确获取 count/errors，避免字符串误用
+            self.log_output.append("[INFO] 解析结果汇总：")
+            for key in ["single_choice", "multiple_choice", "judgment", "short_answer", "calculation"]:
+                res  = results.get(key, {"count": 0, "errors": []})
+                cnt  = res.get("count", 0)
+                errs = res.get("errors", [])
+                self.log_output.append(f"{type_map[key]}：成功 {cnt} 题，失败 {len(errs)} 题")
+                for e in errs:
+                    self.log_output.append(f"  ⚠️ {e}")
+
         except Exception as e:
-            self.log_output.append(f"[EXCEPTION] {str(e)}")
-
-    def update_log_from_file(self):
-        path = os.path.join("logs", "parsing.log")
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                self.log_output.setPlainText(f.read())
-
-    def show_question_details(self, item):
-        q = item.data(Qt.ItemDataRole.UserRole)
-        if isinstance(q, dict):
-            formatted = format_question_preview(q, self.job_input.text(), self.level_combo.currentText())
-            self.question_preview.setText(formatted)
+            self.log_output.append(f"[EXCEPTION] {e}")
 
     def clear_log_output(self):
         self.log_output.clear()
         log_path = os.path.join("logs", "parsing.log")
         try:
             if os.path.exists(log_path):
+                logging.shutdown()
                 os.remove(log_path)
                 self.log_output.append("[INFO] 日志文件已删除。")
-            else:
-                self.log_output.append("[INFO] 日志文件不存在，无需删除。")
         except Exception as e:
-            self.log_output.append(f"[ERROR] 无法删除日志文件: {str(e)}")
+            self.log_output.append(f"[ERROR] 无法删除日志文件: {e}")
 
     def export_file_placeholder(self):
-        self.log_output.append("[提示] 点击了“生成新文件”按钮（功能待实现）")
+        self.log_output.append("[提示] 功能待实现：生成新文件")
 
     def upload_to_server_placeholder(self):
-        self.log_output.append("[提示] 点击了“提交服务器”按钮（功能待实现）")
-
+        self.log_output.append("[提示] 功能待实现：提交服务器")
 
 def launch_gui():
     app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
+    win = MainWindow()
+    win.show()
     sys.exit(app.exec())

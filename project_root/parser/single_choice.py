@@ -1,60 +1,88 @@
-# parser/single_choice.py
-
+from parser.base_parser import BaseParser
+from database.db_manager import insert_question
 import re
-import logging
 
-def parse(lines):
-    results = []
-    i = 0
-    question_index = 1
+def parse_block(q_unit, level_id):
+    # 1. 解析头部编码与三位数字
+    header = q_unit[0]
+    header_text = header if isinstance(header, str) else header.text
+    m = re.search(r'\[T\]([A-Z]{2}\d{3})\s+(\d+)\s+(\d+)\s+(\d+)', header_text)
+    if not m:
+        raise ValueError(f"头部解析失败: {header_text}")
+    recognition_code, lvl_code, qtype_code, diff_coef = m.groups()
+    lvl_code, qtype_code, diff_coef = map(int, (lvl_code, qtype_code, diff_coef))
 
-    header_pat = re.compile(r"\[T\]([A-Z]{2}\d{3})\s+([1-5])\s+1\s+([135])")
+    # 2. 拼接原始题干+选项
+    blocks = BaseParser().parse_content_blocks(q_unit)
+    raw = blocks['T']
 
-    while i < len(lines):
-        line = lines[i].strip()
-        if "[T]" in line:
-            match = header_pat.search(line)
-            if not match:
-                i += 1
-                continue
-            code, level_code, difficulty_code = match.groups()
-            i += 1
+    # 3. 去掉首行，再剥离选项行，只保留题干
+    lines = raw.splitlines()
+    body = lines[1:] if len(lines) > 1 else []
+    stem = []
+    for line in body:
+        if re.match(r'^[A-D][、\.]\s*', line):
+            continue
+        stem.append(line)
+    question_text = '\n'.join(stem).strip()
 
-            q_lines = []
-            while i < len(lines) and "[T/]" not in lines[i]:
-                q_lines.append(lines[i].strip())
-                i += 1
-            if i < len(lines) and "[T/]" in lines[i]:
-                tail = lines[i].replace("[T/]", "").strip()
-                if tail:
-                    q_lines.append(tail)
-                i += 1
+    # 4. 提取选项
+    option_pattern = re.compile(r'^([A-D])[、\.]\s*(.+)$')
+    option_a = option_b = option_c = option_d = None
 
-            question_text = " ".join(q_lines).strip()
+    # 收集所有选项片段
+    segments = []
+    for para in q_unit:
+        text = para if isinstance(para, str) else para.text
+        text = text.strip()
+        # 如果这一行包含选项标记，就按 tab 拆分
+        if any(text.startswith(f"{l}、") or text.startswith(f"{l}.") for l in "ABCD"):
+            parts = text.split('\t')
+            for seg in parts:
+                segments.append(seg.strip())
 
-            answer = None
-            while i < len(lines):
-                ans_line = lines[i].strip()
-                if "[D]" in ans_line and "[D/]" in ans_line:
-                    match = re.search(r"\[D\](.*?)\[D/\]", ans_line)
-                    if match:
-                        answer = match.group(1).strip()
-                    break
-                i += 1
+    # 对每个片段匹配
+    for seg in segments:
+        m2 = option_pattern.match(seg)
+        if not m2:
+            continue
+        letter, content = m2.groups()
+        if letter == 'A':
+            option_a = content
+        elif letter == 'B':
+            option_b = content
+        elif letter == 'C':
+            option_c = content
+        elif letter == 'D':
+            option_d = content
 
-            if not answer or not re.fullmatch(r"[A-D]", answer):
-                logging.error(f"单选题 编码 {code} {level_code} 1 {difficulty_code} 答案格式错误: {answer or ''}")
-                answer = None
+    # 5. 答案
+    answer_text = blocks['D']
 
-            results.append({
-                "code": code,
-                "level_code": level_code,
-                "type_code": "1",
-                "difficulty_code": difficulty_code,
-                "question_text": question_text,
-                "answer": answer
-            })
-            question_index += 1
-        else:
-            i += 1
-    return results
+    # 6. 写入数据库
+    return insert_question(
+        level_id,
+        recognition_code,
+        lvl_code,
+        qtype_code,
+        diff_coef,
+        "单选",
+        question_text,
+        option_a, option_b, option_c, option_d,
+        answer_text,
+        has_formula=0,
+        answer_explanation=None,
+        scoring_criteria=None
+    )
+
+def parse(paragraphs, level_id=1):
+    count, errors = 0, []
+    for idx, unit in enumerate(paragraphs):
+        try:
+            if parse_block(unit, level_id):
+                count += 1
+            else:
+                errors.append(f"第{idx+1}题 写入失败")
+        except Exception as e:
+            errors.append(f"第{idx+1}题 解析错误: {e}")
+    return count, errors

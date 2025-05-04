@@ -1,30 +1,63 @@
-import logging
+import re
 
-def read_block(lines, start_index, end_marker, question_index, part_name):
-    """
-    从 lines 列表中，从 start_index 行开始读取，直到遇到包含 end_marker 的行结束，
-    将所有读取的行合并为一个字符串返回，同时返回新的索引位置（结束行的下一行索引）。
-    
-    参数:
-      lines: 所有文本行的列表
-      start_index: 起始行索引
-      end_marker: 结束标记，例如 "[D/]" 或 "[S/]"
-      question_index: 当前题目序号（用于日志记录）
-      part_name: 当前块名称（例如 "答案" 或 "评分标准"），用于日志提示
-      
-    返回：
-      block_str: 合并后的字符串
-      new_index: 结束行的下一行索引
-    如果没有找到结束标记，则记录错误并返回已读部分及原始索引（便于后续处理）。
-    """
-    block_lines = []
-    i = start_index
-    n = len(lines)
-    while i < n:
-        line = lines[i]
-        block_lines.append(line)
-        if end_marker in line:
-            return (" ".join(block_lines).strip(), i + 1)
-        i += 1
-    logging.error(f"题目 第{question_index}题 {part_name}块中缺少结束标记 {end_marker}. 已读取内容: {' '.join(block_lines).strip()}")
-    return (" ".join(block_lines).strip(), start_index)
+class BaseParser:
+    def __init__(self):
+        pass
+
+    def parse_content_blocks(self, paragraphs):
+        """
+        接受一个段落列表，支持：
+        1) 行内标签 [T]…[T/]、[D]…[D/]、[S]…[S/]
+        2) 跨行标签 [T]…[T/]、[D]…[D/]、[S]…[S/]
+        最后会 flush 未闭合的 buffer。
+        返回 {'T':题干, 'D':答案, 'S':解析/评分标准}
+        """
+        result = {'T': '', 'D': '', 'S': ''}
+        current = None
+        buffer = []
+
+        for para in paragraphs:
+            text = para.text.strip() if hasattr(para, 'text') else str(para).strip()
+
+            # 1. 优先行内标签
+            for tag in ('T', 'D', 'S'):
+                m = re.search(rf'\[{tag}\](.*?)\[{tag}/\]', text, re.S)
+                if m:
+                    result[tag] = m.group(1).strip()
+                    current = None
+                    buffer = []
+                    break
+            else:
+                # 2. 跨行标签开始/结束
+                if '[T]' in text:
+                    current = 'T'
+                    buffer = [text.replace('[T]', '').strip()]
+                elif '[T/]' in text:
+                    buffer.append(text.replace('[T/]', '').strip())
+                    result['T'] = '\n'.join(buffer).strip()
+                    current = None
+                    buffer = []
+                elif '[D]' in text:
+                    current = 'D'
+                    buffer = [text.replace('[D]', '').strip()]
+                elif '[D/]' in text:
+                    buffer.append(text.replace('[D/]', '').strip())
+                    result['D'] = '\n'.join(buffer).strip()
+                    current = None
+                    buffer = []
+                elif '[S]' in text:
+                    current = 'S'
+                    buffer = [text.replace('[S]', '').strip()]
+                elif '[S/]' in text:
+                    buffer.append(text.replace('[S/]', '').strip())
+                    result['S'] = '\n'.join(buffer).strip()
+                    current = None
+                    buffer = []
+                elif current:
+                    buffer.append(text)
+
+        # 3. flush 未闭合的多行 buffer
+        if current and buffer:
+            result[current] = '\n'.join(buffer).strip()
+
+        return result
