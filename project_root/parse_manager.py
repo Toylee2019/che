@@ -1,3 +1,5 @@
+# parse_manager.py
+
 import os
 import logging
 
@@ -35,20 +37,33 @@ def process_document(file_path, level_id=1):
     # 2. 按题型分段
     sections = process_docx_from_paragraphs(paragraphs)
 
-    # —— Debug: 查看分段结果 —— 
+    # —— Debug: 查看分段结果（前 3 个示例） —— 
     for key, section in sections.items():
-        print(f"[DEBUG] {key} 有 {len(section)} 个单元，示例前 3 个：")
+        logging.info(f"[DEBUG] {key} 有 {len(section)} 个单元，示例前 3 个：")
         for i, unit in enumerate(section[:3]):
-            if hasattr(unit, 'text'):
+            if isinstance(unit, str):
+                logging.info(f"  单元{i} 类型: str, 内容: {unit[:50]!r}")
+            elif hasattr(unit, 'text'):
                 txt = unit.text.strip()
-                print(f"  单元{i} 类型: Paragraph, 文本: {txt!r}")
+                logging.info(f"  单元{i} 类型: Paragraph, 文本: {txt!r}")
             elif isinstance(unit, list):
                 snippet = [ (getattr(p, 'text', str(p))[:30]) for p in unit[:3] ]
-                print(f"  单元{i} 类型: list, 段落数: {len(unit)}, 前几段: {snippet}")
+                logging.info(f"  单元{i} 类型: list, 段落数: {len(unit)}, 前几段: {snippet}")
             else:
-                content = str(unit)
-                print(f"  单元{i} 类型: {type(unit)}, 内容: {content[:50]!r}")
+                logging.info(f"  单元{i} 类型: {type(unit)}, 内容: {str(unit)[:50]!r}")
     # —— Debug 结束 —— 
+
+    # —— 额外 Debug：打印所有 single_choice 单元的头部 —— 
+    sc_units = sections.get("single_choice", [])
+    logging.info(f"[DEBUG] single_choice 单元总数: {len(sc_units)}")
+    for idx, unit in enumerate(sc_units, start=1):
+        if isinstance(unit, list) and unit:
+            first = unit[0]
+            header = getattr(first, 'text', str(first)).strip()
+        else:
+            header = getattr(unit, 'text', str(unit)).strip()
+        logging.info(f"[DEBUG] single_choice 单元 {idx} header: {header!r}")
+    # —— 额外 Debug 结束 —— 
 
     # 3. 调用各解析器
     sc_count, sc_errors = single_choice.parse(sections.get("single_choice", []), level_id)
@@ -64,9 +79,9 @@ def process_document(file_path, level_id=1):
 
     # 4. 返回汇总
     return {
-        "single_choice": {"count": sc_count, "errors": sc_errors},
+        "single_choice":   {"count": sc_count, "errors": sc_errors},
         "multiple_choice": {"count": mc_count, "errors": mc_errors},
-        "judgment": {"count": jd_count, "errors": jd_errors},
-        "short_answer": {"count": sa_count, "errors": sa_errors},
-        "calculation": {"count": cl_count, "errors": cl_errors},
+        "judgment":        {"count": jd_count, "errors": jd_errors},
+        "short_answer":    {"count": sa_count, "errors": sa_errors},
+        "calculation":     {"count": cl_count, "errors": cl_errors},
     }

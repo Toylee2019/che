@@ -1,3 +1,5 @@
+# db_manager.py
+
 import sqlite3
 import os
 
@@ -116,7 +118,7 @@ def insert_question(
         scoring_criteria
     ))
     conn.commit()
-    success = cursor.rowcount == 1
+    success = (cursor.rowcount == 1)
     conn.close()
     return success
 
@@ -171,6 +173,10 @@ def count_questions(level_id):
     return count
 
 def delete_questions_by_level(level_id):
+    """
+    删除指定 level_id 下的所有题目及其关联资源，
+    并重置 questions 表的自增 ID，使下次插入从 1 开始。
+    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     # 先删图片与公式
@@ -187,5 +193,32 @@ def delete_questions_by_level(level_id):
         "DELETE FROM questions WHERE level_id = ?",
         (level_id,)
     )
+    # 重置自增序列
+    cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'questions';")
     conn.commit()
     conn.close()
+
+def fetch_questions_by_level(level_id):
+    """
+    从数据库中取出指定 level_id 下所有题目的关键信息
+    返回 list of dict:
+      {recognition_code, question_type, answer, answer_explanation}
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT recognition_code, question_type, answer, answer_explanation
+        FROM questions
+        WHERE level_id = ?
+    """, (level_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for rec_code, qt, ans, exp in rows:
+        result.append({
+            "recognition_code": rec_code,
+            "question_type":    qt,
+            "answer":           ans,
+            "answer_explanation": exp,
+        })
+    return result
