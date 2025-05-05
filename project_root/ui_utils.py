@@ -13,6 +13,21 @@ def apply_dark_theme(widget):
             border-radius: 5px;
             padding: 4px;
         }
+        QListWidget::item {
+            /* 默认列表项背景 */
+            background-color: #2a2a2a;
+            /* 取消默认焦点边框 */
+            outline: none;
+        }
+        QListWidget::item:hover {
+            /* 鼠标悬停时的背景色 */
+            background-color: #3a3a3a;
+        }
+        QListWidget::item:selected {
+            /* 选中时的背景色 */
+            background-color: #505050;
+            color: #ffffff;
+        }
         QPushButton {
             background-color: #3c3c3c;
             color: #ffffff;
@@ -37,6 +52,20 @@ def apply_light_theme(widget):
             border: 1px solid #ccc;
             border-radius: 5px;
             padding: 4px;
+        }
+        QListWidget::item {
+            /* 默认列表项背景 */
+            background-color: #ffffff;
+            outline: none;
+        }
+        QListWidget::item:hover {
+            /* 鼠标悬停时的背景色 */
+            background-color: #eaeaea;
+        }
+        QListWidget::item:selected {
+            /* 选中时的背景色 */
+            background-color: #c0c0f0;
+            color: #202020;
         }
         QPushButton {
             background-color: #e0e0e0;

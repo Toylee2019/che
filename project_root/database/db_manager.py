@@ -59,7 +59,8 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-    print("✅ 本地 SQLite 数据库已初始化并建表（如尚未存在）")  # 仅在调试时打印
+    print("✅ 本地 SQLite 数据库已初始化并建表（如尚未存在）")
+
 
 def insert_question(
     level_id,
@@ -123,6 +124,7 @@ def insert_question(
     conn.close()
     return qid
 
+
 def insert_question_image(question_id: int, image_path: str) -> None:
     """
     将一条题目图片路径写入 question_images 表。
@@ -135,6 +137,7 @@ def insert_question_image(question_id: int, image_path: str) -> None:
     )
     conn.commit()
     conn.close()
+
 
 def insert_question_formula(question_id: int, formula_type: str, content: str) -> None:
     """
@@ -149,6 +152,7 @@ def insert_question_formula(question_id: int, formula_type: str, content: str) -
     conn.commit()
     conn.close()
 
+
 def get_job_id(job_name):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -162,6 +166,7 @@ def get_job_id(job_name):
         conn.commit()
     conn.close()
     return job_id
+
 
 def get_level_id(job_id, level_name):
     conn = sqlite3.connect(DB_PATH)
@@ -183,6 +188,7 @@ def get_level_id(job_id, level_name):
     conn.close()
     return level_id
 
+
 def has_questions(level_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -190,6 +196,7 @@ def has_questions(level_id):
     count = cursor.fetchone()[0]
     conn.close()
     return count > 0
+
 
 def count_questions(level_id):
     conn = sqlite3.connect(DB_PATH)
@@ -199,65 +206,15 @@ def count_questions(level_id):
     conn.close()
     return count
 
-def delete_questions_by_level(level_id):
-    """
-    删除指定 level_id 下的所有题目及其关联资源，
-    并重置 questions 表的自增序列。
-    """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    # 先删图片与公式
-    cursor.execute(
-        "DELETE FROM question_images WHERE question_id IN (SELECT id FROM questions WHERE level_id = ?)",
-        (level_id,)
-    )
-    cursor.execute(
-        "DELETE FROM question_formulas WHERE question_id IN (SELECT id FROM questions WHERE level_id = ?)",
-        (level_id,)
-    )
-    # 再删题目
-    cursor.execute(
-        "DELETE FROM questions WHERE level_id = ?",
-        (level_id,)
-    )
-    # 重置自增序列
-    cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'questions';")
-    conn.commit()
-    conn.close()
-
-def fetch_questions_by_level(level_id):
-    """
-    从数据库中取出指定 level_id 下所有题目的关键信息，
-    返回 list of dict: {recognition_code, question_type, answer, answer_explanation}
-    """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT recognition_code, question_type, answer, answer_explanation
-        FROM questions
-        WHERE level_id = ?
-    """, (level_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    result = []
-    for rec_code, qt, ans, exp in rows:
-        result.append({
-            "recognition_code":    rec_code,
-            "question_type":       qt,
-            "answer":              ans,
-            "answer_explanation":  exp,
-        })
-    return result
 
 def delete_questions_by_level(level_id):
     """
-    删除指定 level_id 下的所有题目及关联的媒体记录，
-    并删除对应磁盘上的图片文件，最后重置 questions 表自增序列。
+    删除指定 level_id 下的所有题目及其关联资源，并删除对应磁盘上的图片文件，
+    最后重置 questions 表的自增序列。
     """
+    # 1. 先查出要删除的所有图片路径
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-
-    # 1. 查出所有要删除的图片路径
     cursor.execute(
         "SELECT image_path FROM question_images WHERE question_id IN "
         "(SELECT id FROM questions WHERE level_id = ?)",
@@ -265,7 +222,7 @@ def delete_questions_by_level(level_id):
     )
     img_paths = [row[0] for row in cursor.fetchall()]
 
-    # 2. 删除数据库里的图片和公式关联
+    # 2. 删除数据库里的图片与公式记录
     cursor.execute(
         "DELETE FROM question_images WHERE question_id IN "
         "(SELECT id FROM questions WHERE level_id = ?)",
@@ -276,15 +233,13 @@ def delete_questions_by_level(level_id):
         "(SELECT id FROM questions WHERE level_id = ?)",
         (level_id,)
     )
-
-    # 3. 删除题目主表记录
+    # 3. 删除题目记录
     cursor.execute(
         "DELETE FROM questions WHERE level_id = ?",
         (level_id,)
     )
     # 4. 重置自增序列
     cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'questions';")
-
     conn.commit()
     conn.close()
 
@@ -293,5 +248,58 @@ def delete_questions_by_level(level_id):
         try:
             os.remove(path)
         except Exception:
-            # 忽略文件不存在或删除失败
-            pass
+            pass  # 忽略删除失败
+
+
+def fetch_questions_by_level(level_id):
+    """
+    从数据库中取出指定 level_id 下所有题目的关键信息，
+    返回 list of dict，包含：
+      recognition_code, question_type, answer, answer_explanation,
+      content_text, option_a, option_b, option_c, option_d
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+          recognition_code,
+          question_type,
+          answer,
+          answer_explanation,
+          content_text,
+          option_a,
+          option_b,
+          option_c,
+          option_d
+        FROM questions
+        WHERE level_id = ?
+    """, (level_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for rec_code, qt, ans, exp, text, a, b, c, d in rows:
+        result.append({
+            "recognition_code":   rec_code,
+            "question_type":      qt,
+            "answer":             ans,
+            "answer_explanation": exp,
+            "content_text":       text,
+            "option_a":           a,
+            "option_b":           b,
+            "option_c":           c,
+            "option_d":           d,
+        })
+    return result
+
+
+def fetch_jobs():
+    """
+    返回所有已存在的工种名称，list of str
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM jobs ORDER BY name")
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
