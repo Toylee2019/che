@@ -248,3 +248,50 @@ def fetch_questions_by_level(level_id):
             "answer_explanation":  exp,
         })
     return result
+
+def delete_questions_by_level(level_id):
+    """
+    删除指定 level_id 下的所有题目及关联的媒体记录，
+    并删除对应磁盘上的图片文件，最后重置 questions 表自增序列。
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # 1. 查出所有要删除的图片路径
+    cursor.execute(
+        "SELECT image_path FROM question_images WHERE question_id IN "
+        "(SELECT id FROM questions WHERE level_id = ?)",
+        (level_id,)
+    )
+    img_paths = [row[0] for row in cursor.fetchall()]
+
+    # 2. 删除数据库里的图片和公式关联
+    cursor.execute(
+        "DELETE FROM question_images WHERE question_id IN "
+        "(SELECT id FROM questions WHERE level_id = ?)",
+        (level_id,)
+    )
+    cursor.execute(
+        "DELETE FROM question_formulas WHERE question_id IN "
+        "(SELECT id FROM questions WHERE level_id = ?)",
+        (level_id,)
+    )
+
+    # 3. 删除题目主表记录
+    cursor.execute(
+        "DELETE FROM questions WHERE level_id = ?",
+        (level_id,)
+    )
+    # 4. 重置自增序列
+    cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'questions';")
+
+    conn.commit()
+    conn.close()
+
+    # 5. 删除磁盘上的图片文件
+    for path in img_paths:
+        try:
+            os.remove(path)
+        except Exception:
+            # 忽略文件不存在或删除失败
+            pass
