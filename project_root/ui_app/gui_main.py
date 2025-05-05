@@ -7,19 +7,29 @@ from collections import defaultdict
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QComboBox,
     QPushButton, QTextEdit, QListWidget, QFileDialog,
-    QVBoxLayout, QHBoxLayout, QTabWidget, QSplitter, QMessageBox
+    QVBoxLayout, QHBoxLayout, QTabWidget, QSplitter, QMessageBox,
+    QProgressBar
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, QTimer
 from ui_utils import apply_dark_theme, apply_light_theme
 
-# 导入我们的数量标准
 from config.requirements import EXPECT_COUNTS
 from database.db_manager import (
     init_db, get_job_id, get_level_id,
     has_questions, count_questions, delete_questions_by_level,
     fetch_questions_by_level
 )
-from parse_manager import process_document
+from ui_app.worker import ParseWorker
+
+
+logging.basicConfig(
+    filename="logs/gui.log",
+    filemode="a",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    encoding="utf-8"
+)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -28,6 +38,22 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1000, 600)
         self.selected_file = ""
         self.dark_mode = True
+
+        # 保存上下文
+        self.current_job_name = ""
+        self.current_level_text = ""
+        self.current_level_id = None
+
+        # 假进度定时器（慢进度）
+        self.fake_timer = QTimer(self)
+        self.fake_timer.setInterval(150)
+        self.fake_timer.timeout.connect(self._on_fake_tick)
+
+        # 炫光色相定时器
+        self.hue_timer = QTimer(self)
+        self.hue_timer.setInterval(50)
+        self.hue_timer.timeout.connect(self._on_hue_tick)
+        self.current_hue = 0
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.create_param_log_tab(), "参数与日志")
@@ -58,6 +84,7 @@ class MainWindow(QMainWindow):
         self.level_combo = QComboBox()
         self.level_combo.addItems(["初级工", "中级工", "高级工", "技师", "高级技师"])
         row1.addWidget(self.level_combo)
+        layout.addLayout(row1)
 
         # 第二行：按钮组
         row2 = QHBoxLayout()
@@ -95,14 +122,35 @@ class MainWindow(QMainWindow):
         upload_btn.clicked.connect(self.upload_to_server_placeholder)
         row2.addWidget(upload_btn)
 
+        layout.addLayout(row2)
+
+        # 第三行：日志输出 + 细进度条 + 百分比 + 状态
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        # 进度条高度设为1px
+        self.progress_bar.setFixedHeight(1)
+
+        self.percent_label = QLabel("0%")
+        self.percent_label.setFixedWidth(40)
+
+        self.status_label = QLabel("")
+        self.status_label.setMinimumWidth(120)
+
+        row3 = QHBoxLayout()
+        row3.addStretch()
+        row3.addWidget(QLabel("日志输出："))
+        row3.addWidget(self.progress_bar, stretch=1)
+        row3.addWidget(self.percent_label)
+        row3.addWidget(self.status_label)
+        layout.addLayout(row3)
+
         # 日志输出区
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
-
-        layout.addLayout(row1)
-        layout.addLayout(row2)
-        layout.addWidget(QLabel("日志输出："))
         layout.addWidget(self.log_output)
+
         return tab
 
     def create_question_tab(self):
@@ -131,18 +179,22 @@ class MainWindow(QMainWindow):
             self.log_output.append("[ERROR] 未选择文件")
             return
 
-        # 1. 初始化数据库
+        self.tabs.setEnabled(False)
         init_db()
 
-        job_name   = self.job_input.text().strip()
+        job_name = self.job_input.text().strip()
         level_text = self.level_combo.currentText().strip()
         if not job_name:
             QMessageBox.warning(self, "缺少工种名称", "请先输入“工种名称”再继续")
+            self.tabs.setEnabled(True)
             return
 
-        # 2. 获取 job_id, level_id，并可选删除旧题库
-        job_id   = get_job_id(job_name)
+        job_id = get_job_id(job_name)
         level_id = get_level_id(job_id, level_text)
+
+        self.current_job_name = job_name
+        self.current_level_text = level_text
+        self.current_level_id = level_id
 
         if has_questions(level_id):
             old_cnt = count_questions(level_id)
@@ -154,6 +206,7 @@ class MainWindow(QMainWindow):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 self.log_output.append("[INFO] 用户取消上传新题库")
+                self.tabs.setEnabled(True)
                 return
             delete_questions_by_level(level_id)
             new_cnt = count_questions(level_id)
@@ -161,13 +214,75 @@ class MainWindow(QMainWindow):
                 f"[INFO] 已删除旧题库：共删除 {old_cnt - new_cnt} 题（原 {old_cnt} 题，现 {new_cnt} 题）"
             )
 
-        # 3. 解析文档并写入数据库
-        results = process_document(self.selected_file, level_id)
-        if results is None:
-            self.log_output.append("[ERROR] 解析失败，请查看日志文件")
-            return
+        # 启动炫光与假进度
+        self.hue_timer.start()
+        self.fake_timer.stop()
 
-        # 4. 展示基础解析汇总
+        self.thread = QThread()
+        self.worker = ParseWorker(self.selected_file, level_id)
+        self.worker.moveToThread(self.thread)
+
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self.update_progress)
+        self.worker.finished.connect(self.on_finished)
+        self.worker.error.connect(self.on_error)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.error.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.error.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
+
+    def update_progress(self, value: int, message: str):
+        # 假进度阈值恢复到 35%
+        if value < 35:
+            self.progress_bar.setValue(value)
+            self.percent_label.setText(f"{value}%")
+        elif value == 35:
+            self.progress_bar.setValue(35)
+            self.percent_label.setText("35%")
+            self.fake_timer.start()
+        else:
+            self.fake_timer.stop()
+            self.progress_bar.setValue(100)
+            self.percent_label.setText("100%")
+
+        self.status_label.setText(message)
+        # 仅在进度 <100 时写日志
+        if value < 100:
+            self.log_output.append(f"[INFO] {message} ({value}%)")
+
+    def _on_fake_tick(self):
+        cur = int(self.percent_label.text().rstrip("%"))
+        if cur < 95:
+            cur += 1
+            self.progress_bar.setValue(cur)
+            self.percent_label.setText(f"{cur}%")
+        else:
+            self.fake_timer.stop()
+
+    def _on_hue_tick(self):
+        self.current_hue = (self.current_hue + 5) % 360
+        style = f"""
+            QProgressBar::chunk {{
+                background: hsl({self.current_hue}, 100%, 50%);
+            }}
+        """
+        self.progress_bar.setStyleSheet(style)
+
+    def on_finished(self, summary: dict):
+        self.tabs.setEnabled(True)
+        self.fake_timer.stop()
+        self.hue_timer.stop()
+
+        # 只写一次“解析完成”
+        self.progress_bar.setValue(100)
+        self.percent_label.setText("100%")
+        self.status_label.setText("解析完成")
+        self.log_output.append("[INFO] 解析完成 (100%)")
+
+        text = "[INFO] 解析结果汇总：\n"
         type_map = {
             "single_choice": "单项选择题",
             "multiple_choice": "多项选择题",
@@ -175,48 +290,49 @@ class MainWindow(QMainWindow):
             "short_answer": "简答题",
             "calculation": "计算题"
         }
-        self.log_output.append("[INFO] 解析结果汇总：")
         for key in ["single_choice", "multiple_choice", "judgment", "short_answer", "calculation"]:
-            res  = results.get(key, {"count": 0, "errors": []})
-            cnt  = res.get("count", 0)
-            errs = res.get("errors", [])
-            self.log_output.append(f"{type_map[key]}：成功 {cnt} 题，失败 {len(errs)} 题")
+            res = summary.get(key, {"count": 0, "errors": []})
+            cnt = res["count"]
+            errs = res["errors"]
+            text += f"{type_map[key]}：成功 {cnt} 失败 {len(errs)}\n"
             for e in errs:
-                self.log_output.append(f"  ⚠️ {e}")
+                text += f"  ⚠️ {e}\n"
 
-        # 5. 按题型各自校验：只对该类型出现过的认定点做数量/判断校验
-        qs_all = fetch_questions_by_level(level_id)
-        # 准备每种题型对应的中文名称和 EXPECT_COUNTS 键
-        check_types = [("单选", "单选"), ("多选", "多选"), ("判断", "判断")]
-
-        for qtype, label in check_types:
-            expected = EXPECT_COUNTS[level_text].get(qtype, 0)
-            # 筛选出在这一题型下出现过的认定点
-            codes = {q["recognition_code"] for q in qs_all if q["question_type"] == qtype}
+        qs_all = fetch_questions_by_level(self.current_level_id)
+        for label in ["单选", "多选", "判断"]:
+            expected = EXPECT_COUNTS[self.current_level_text].get(label, 0)
+            codes = {q["recognition_code"] for q in qs_all if q["question_type"] == label}
             if not codes:
                 continue
-
             errs = []
             for code in sorted(codes):
-                group = [q for q in qs_all if q["recognition_code"] == code and q["question_type"] == qtype]
+                group = [q for q in qs_all if q["recognition_code"] == code and q["question_type"] == label]
                 actual = len(group)
                 if actual != expected:
-                    errs.append(f"认定点 {code}: {label} 数量不符，要求 {expected}，实际 {actual}")
-                if qtype == "判断":
-                    trues  = [q for q in group if q["answer"] == "√"]
+                    errs.append(f"认定点 {code}：{label} 数量不符，要求 {expected}，实际 {actual}")
+                if label == "判断":
+                    trues = [q for q in group if q["answer"] == "√"]
                     falses = [q for q in group if q["answer"] == "×"]
-                    if len(trues) < 1:
-                        errs.append(f"认定点 {code}: 判断题中“√”题数不足")
-                    if len(falses) < 1:
-                        errs.append(f"认定点 {code}: 判断题中“×”题数不足")
+                    if not trues:
+                        errs.append(f"认定点 {code}：判断题中“√”题数不足")
+                    if not falses:
+                        errs.append(f"认定点 {code}：判断题中“×”题数不足")
                     for q in falses:
                         if not q.get("answer_explanation"):
-                            errs.append(f"认定点 {code}: 判断题“×”题缺少解析")
-
+                            errs.append(f"认定点 {code}：判断题“×”题缺少解析")
             if errs:
-                self.log_output.append(f"\n[ERROR] —— {label}题 校验错误 ——")
+                text += f"\n[ERROR] —— {label}题 校验错误 ——\n"
                 for e in errs:
-                    self.log_output.append(f"[ERROR] {e}")
+                    text += f"[ERROR] {e}\n"
+
+        self.log_output.append(text)
+
+    def on_error(self, msg: str):
+        self.tabs.setEnabled(True)
+        self.fake_timer.stop()
+        self.hue_timer.stop()
+        self.log_output.append(f"[ERROR] {msg}")
+        QMessageBox.critical(self, "错误", f"发生异常：{msg}")
 
     def clear_log_output(self):
         self.log_output.clear()
@@ -235,8 +351,14 @@ class MainWindow(QMainWindow):
     def upload_to_server_placeholder(self):
         self.log_output.append("[提示] 功能待实现：提交服务器")
 
+
 def launch_gui():
+    """供 gui_launcher.py 导入启动"""
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    launch_gui()
