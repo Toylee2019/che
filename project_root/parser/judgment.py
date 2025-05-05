@@ -1,8 +1,7 @@
-from parser.base_parser import BaseParser
-from database.db_manager import insert_question
 import re
+from parser.base_parser import BaseParser
 
-def parse_block(q_unit, level_id):
+def parse_block(q_unit, level_id, media_catalog=None):
     # 1. 头部解析
     header = q_unit[0]
     header_text = header.text if hasattr(header, 'text') else str(header)
@@ -15,38 +14,49 @@ def parse_block(q_unit, level_id):
     # 2. 内容块解析
     blocks = BaseParser().parse_content_blocks(q_unit)
 
-    # 3. 清洗题干：去掉首行编号
+    # 3. 清洗题干
     lines = blocks['T'].splitlines()
     question_text = '\n'.join(lines[1:]).strip() if len(lines) > 1 else ''
 
     # 4. 答案与解析
-    answer_text        = blocks['D']  # √ 或 ×
-    answer_explanation = blocks['S']  # 判断题解析
+    answer_text        = blocks['D']
+    answer_explanation = blocks['S']
 
-    # 5. 写入数据库
-    return insert_question(
-        level_id,
-        recognition_code,
-        lvl_code,
-        qtype_code,
-        diff_coef,
-        "判断",
-        question_text,
-        None, None, None, None,
-        answer_text,
-        has_formula=0,
-        answer_explanation=answer_explanation,
-        scoring_criteria=None
+    # 5. 构造返回值
+    question_dict = {
+        'level_id': level_id,
+        'recognition_code': recognition_code,
+        'level_code': lvl_code,
+        'question_type_code': qtype_code,
+        'difficulty_coefficient': diff_coef,
+        'question_type': "判断",
+        'content_text': question_text,
+        'option_a': None,
+        'option_b': None,
+        'option_c': None,
+        'option_d': None,
+        'answer': answer_text,
+        'has_formula': 0,
+        'answer_explanation': answer_explanation,
+        'scoring_criteria': None
+    }
+
+    # 6. 提取媒体引用
+    full_text = "\n".join(
+        para if isinstance(para, str) else (para.text or "")
+        for para in q_unit
     )
+    media_refs = [int(x) for x in re.findall(r'\[IMAGE_(\d+)\]', full_text)]
+    media_refs += [int(x) for x in re.findall(r'\[MATH_(\d+)\]', full_text)]
 
-def parse(paragraphs, level_id=1):
-    count, errors = 0, []
+    return question_dict, media_refs
+
+def parse(paragraphs, level_id=1, media_catalog=None):
+    items, errors = [], []
     for idx, unit in enumerate(paragraphs):
         try:
-            if parse_block(unit, level_id):
-                count += 1
-            else:
-                errors.append(f"第{idx+1}题 写入失败")
+            qdict, media_refs = parse_block(unit, level_id, media_catalog)
+            items.append((qdict, media_refs))
         except Exception as e:
             errors.append(f"第{idx+1}题 解析错误: {e}")
-    return count, errors
+    return items, errors

@@ -3,6 +3,10 @@ VENV/
 venv/
 .env/
 *.venv/
+media/
+project_root/*.docx
+project_root/*.db
+
 
 # 忽略Python缓存文件
 __pycache__/
@@ -12,3 +16,4 @@ __pycache__/
 # 忽略其他可能生成的文件
 *.egg-info/
 *.log
+*.docx

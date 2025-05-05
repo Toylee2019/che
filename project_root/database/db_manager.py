@@ -1,13 +1,14 @@
-# db_manager.py
+# database/db_manager.py
 
 import sqlite3
 import os
 
+# 数据库文件路径
 DB_PATH = "questions.db"
 
 def init_db():
     """
-    初始化数据库并创建必要的表
+    初始化数据库并创建必要的表。
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -58,7 +59,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-    print("✅ 本地 SQLite 数据库已初始化并建表（如尚未存在）")
+    print("✅ 本地 SQLite 数据库已初始化并建表（如尚未存在）")  # 仅在调试时打印
 
 def insert_question(
     level_id,
@@ -78,7 +79,7 @@ def insert_question(
     scoring_criteria=None
 ):
     """
-    将一条题目插入 questions 表中，返回 True/False
+    将一条题目插入 questions 表中，返回新插入的 question_id。
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -118,9 +119,35 @@ def insert_question(
         scoring_criteria
     ))
     conn.commit()
-    success = (cursor.rowcount == 1)
+    qid = cursor.lastrowid
     conn.close()
-    return success
+    return qid
+
+def insert_question_image(question_id: int, image_path: str) -> None:
+    """
+    将一条题目图片路径写入 question_images 表。
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO question_images(question_id, image_path) VALUES (?, ?)",
+        (question_id, image_path)
+    )
+    conn.commit()
+    conn.close()
+
+def insert_question_formula(question_id: int, formula_type: str, content: str) -> None:
+    """
+    将一段公式（MathML 或文本）写入 question_formulas 表。
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO question_formulas(question_id, formula_type, content) VALUES (?, ?, ?)",
+        (question_id, formula_type, content)
+    )
+    conn.commit()
+    conn.close()
 
 def get_job_id(job_name):
     conn = sqlite3.connect(DB_PATH)
@@ -175,7 +202,7 @@ def count_questions(level_id):
 def delete_questions_by_level(level_id):
     """
     删除指定 level_id 下的所有题目及其关联资源，
-    并重置 questions 表的自增 ID，使下次插入从 1 开始。
+    并重置 questions 表的自增序列。
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -200,9 +227,8 @@ def delete_questions_by_level(level_id):
 
 def fetch_questions_by_level(level_id):
     """
-    从数据库中取出指定 level_id 下所有题目的关键信息
-    返回 list of dict:
-      {recognition_code, question_type, answer, answer_explanation}
+    从数据库中取出指定 level_id 下所有题目的关键信息，
+    返回 list of dict: {recognition_code, question_type, answer, answer_explanation}
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -216,9 +242,9 @@ def fetch_questions_by_level(level_id):
     result = []
     for rec_code, qt, ans, exp in rows:
         result.append({
-            "recognition_code": rec_code,
-            "question_type":    qt,
-            "answer":           ans,
-            "answer_explanation": exp,
+            "recognition_code":    rec_code,
+            "question_type":       qt,
+            "answer":              ans,
+            "answer_explanation":  exp,
         })
     return result
