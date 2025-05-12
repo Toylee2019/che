@@ -1,3 +1,5 @@
+# parser/multiple_choice.py
+
 import re
 from parser.base_parser import BaseParser
 
@@ -42,6 +44,10 @@ def parse_block(q_unit, level_id, media_catalog=None):
     # 5. 答案
     answer_text = blocks['D']
 
+    # 5.1 格式校验：多选答案必须是多个字母（至少两个）
+    if not re.fullmatch(r"[A-D]{2,}", answer_text):
+        raise ValueError(f"答案格式错误（应为多个字母），实际 '{answer_text}'")
+
     # 6. 构造返回值
     question_dict = {
         'level_id': level_id,
@@ -72,11 +78,22 @@ def parse_block(q_unit, level_id, media_catalog=None):
     return question_dict, media_refs
 
 def parse(paragraphs, level_id=1, media_catalog=None):
+    """
+    解析多选题，并在出错时附带认定点编码。
+    """
     items, errors = [], []
     for idx, unit in enumerate(paragraphs):
+        # 预提取认定点编码
+        header = unit[0]
+        header_text = header if isinstance(header, str) else header.text or ""
+        m_code = re.search(r'\[T\]([A-Z]{2}\d{3})', header_text)
+        rec_code = m_code.group(1) if m_code else f"第{idx+1}题"
+
         try:
             qdict, media_refs = parse_block(unit, level_id, media_catalog)
             items.append((qdict, media_refs))
         except Exception as e:
-            errors.append(f"第{idx+1}题 解析错误: {e}")
+            # 将错误信息与认定点一起记录
+            errors.append(f"解析错误：多选题{rec_code} {e}")
+
     return items, errors

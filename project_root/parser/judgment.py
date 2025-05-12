@@ -1,7 +1,12 @@
+# parser/judgment.py
+
 import re
 from parser.base_parser import BaseParser
 
 def parse_block(q_unit, level_id, media_catalog=None):
+    """
+    解析单条判断题，返回 question_dict 和 media_refs。
+    """
     # 1. 头部解析
     header = q_unit[0]
     header_text = header.text if hasattr(header, 'text') else str(header)
@@ -14,7 +19,7 @@ def parse_block(q_unit, level_id, media_catalog=None):
     # 2. 内容块解析
     blocks = BaseParser().parse_content_blocks(q_unit)
 
-    # 3. 清洗题干
+    # 3. 清洗题干（去掉首行）
     lines = blocks['T'].splitlines()
     question_text = '\n'.join(lines[1:]).strip() if len(lines) > 1 else ''
 
@@ -22,7 +27,7 @@ def parse_block(q_unit, level_id, media_catalog=None):
     answer_text        = blocks['D']
     answer_explanation = blocks['S']
 
-    # 5. 构造返回值
+    # 5. 构造 question_dict
     question_dict = {
         'level_id': level_id,
         'recognition_code': recognition_code,
@@ -52,11 +57,33 @@ def parse_block(q_unit, level_id, media_catalog=None):
     return question_dict, media_refs
 
 def parse(paragraphs, level_id=1, media_catalog=None):
+    """
+    解析判断题列表，对每道题：
+    - 检查答案必须是“√”或“×”
+    - 如果答案是“×”，必须有解析
+    """
     items, errors = [], []
+
+    # 逐题解析，并附带认定点编码的错误收集
     for idx, unit in enumerate(paragraphs):
+        header = unit[0]
+        header_text = header.text if hasattr(header, 'text') else str(header)
+        m_code = re.search(r'\[T\]([A-Z]{2}\d{3})', header_text)
+        rec_code = m_code.group(1) if m_code else f"第{idx+1}题"
+
         try:
             qdict, media_refs = parse_block(unit, level_id, media_catalog)
             items.append((qdict, media_refs))
         except Exception as e:
-            errors.append(f"第{idx+1}题 解析错误: {e}")
+            errors.append(f"解析错误：判断题{rec_code} {e}")
+    
+    # 对每道题再做格式校验
+    for qdict, _ in items:
+        code = qdict['recognition_code']
+        ans  = qdict['answer']
+        if ans not in ("√", "×"):
+            errors.append(f"{code} 判断题: 非法答案 '{ans}'")
+        if ans == "×" and not qdict.get('answer_explanation'):
+            errors.append(f"{code} 判断题: 错误选项缺少解析")
+
     return items, errors

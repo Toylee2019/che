@@ -28,7 +28,7 @@ def validate_recognition(qs, level_name):
         actual = counts.get(qt, 0)
         expected = exp.get(qt, 0)
         if actual != expected:
-            errors.append(f"认定点 {rec}: {qt} 数量不符，期望 {expected}，实际 {actual}")
+            errors.append(f"认定点 {rec}: {qt} 数量不符，期望 {expected}，现为 {actual}")
 
     # 4. 判断题真/假及解析校验
     jd_expected = exp.get("判断", 0)

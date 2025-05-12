@@ -1,5 +1,3 @@
-# database/db_manager.py
-
 import sqlite3
 import os
 
@@ -61,7 +59,6 @@ def init_db():
     conn.close()
     print("✅ 本地 SQLite 数据库已初始化并建表（如尚未存在）")
 
-
 def insert_question(
     level_id,
     recognition_code,
@@ -103,32 +100,17 @@ def insert_question(
             scoring_criteria
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        level_id,
-        recognition_code,
-        level_code,
-        question_type_code,
-        difficulty_coefficient,
-        question_type,
-        content_text,
-        option_a,
-        option_b,
-        option_c,
-        option_d,
-        answer,
-        has_formula,
-        answer_explanation,
-        scoring_criteria
+        level_id, recognition_code, level_code, question_type_code,
+        difficulty_coefficient, question_type, content_text,
+        option_a, option_b, option_c, option_d,
+        answer, has_formula, answer_explanation, scoring_criteria
     ))
     conn.commit()
     qid = cursor.lastrowid
     conn.close()
     return qid
 
-
 def insert_question_image(question_id: int, image_path: str) -> None:
-    """
-    将一条题目图片路径写入 question_images 表。
-    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -138,11 +120,7 @@ def insert_question_image(question_id: int, image_path: str) -> None:
     conn.commit()
     conn.close()
 
-
 def insert_question_formula(question_id: int, formula_type: str, content: str) -> None:
-    """
-    将一段公式（MathML 或文本）写入 question_formulas 表。
-    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -151,7 +129,6 @@ def insert_question_formula(question_id: int, formula_type: str, content: str) -
     )
     conn.commit()
     conn.close()
-
 
 def get_job_id(job_name):
     conn = sqlite3.connect(DB_PATH)
@@ -166,7 +143,6 @@ def get_job_id(job_name):
         conn.commit()
     conn.close()
     return job_id
-
 
 def get_level_id(job_id, level_name):
     conn = sqlite3.connect(DB_PATH)
@@ -188,7 +164,6 @@ def get_level_id(job_id, level_name):
     conn.close()
     return level_id
 
-
 def has_questions(level_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -196,7 +171,6 @@ def has_questions(level_id):
     count = cursor.fetchone()[0]
     conn.close()
     return count > 0
-
 
 def count_questions(level_id):
     conn = sqlite3.connect(DB_PATH)
@@ -206,13 +180,7 @@ def count_questions(level_id):
     conn.close()
     return count
 
-
 def delete_questions_by_level(level_id):
-    """
-    删除指定 level_id 下的所有题目及其关联资源，并删除对应磁盘上的图片文件，
-    最后重置 questions 表的自增序列。
-    """
-    # 1. 先查出要删除的所有图片路径
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -222,7 +190,6 @@ def delete_questions_by_level(level_id):
     )
     img_paths = [row[0] for row in cursor.fetchall()]
 
-    # 2. 删除数据库里的图片与公式记录
     cursor.execute(
         "DELETE FROM question_images WHERE question_id IN "
         "(SELECT id FROM questions WHERE level_id = ?)",
@@ -233,73 +200,204 @@ def delete_questions_by_level(level_id):
         "(SELECT id FROM questions WHERE level_id = ?)",
         (level_id,)
     )
-    # 3. 删除题目记录
     cursor.execute(
         "DELETE FROM questions WHERE level_id = ?",
         (level_id,)
     )
-    # 4. 重置自增序列
     cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'questions';")
     conn.commit()
     conn.close()
 
-    # 5. 删除磁盘上的图片文件
     for path in img_paths:
         try:
             os.remove(path)
-        except Exception:
-            pass  # 忽略删除失败
-
+        except:
+            pass
 
 def fetch_questions_by_level(level_id):
-    """
-    从数据库中取出指定 level_id 下所有题目的关键信息，
-    返回 list of dict，包含：
-      recognition_code, question_type, answer, answer_explanation,
-      content_text, option_a, option_b, option_c, option_d
-    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         SELECT
+          id,
           recognition_code,
+          level_code,
+          question_type_code,
+          difficulty_coefficient,
           question_type,
-          answer,
-          answer_explanation,
           content_text,
           option_a,
           option_b,
           option_c,
-          option_d
+          option_d,
+          answer,
+          answer_explanation,
+          scoring_criteria
         FROM questions
         WHERE level_id = ?
     """, (level_id,))
     rows = cursor.fetchall()
     conn.close()
-
     result = []
-    for rec_code, qt, ans, exp, text, a, b, c, d in rows:
+    for (qid, rec_code, level_code, question_type_code, difficulty_coefficient,
+         qt, text, a, b, c, d, ans, exp, score) in rows:
         result.append({
-            "recognition_code":   rec_code,
-            "question_type":      qt,
-            "answer":             ans,
-            "answer_explanation": exp,
-            "content_text":       text,
-            "option_a":           a,
-            "option_b":           b,
-            "option_c":           c,
-            "option_d":           d,
+            "id":                     qid,
+            "recognition_code":       rec_code,
+            "level_code":             level_code,
+            "question_type_code":     question_type_code,
+            "difficulty_coefficient": difficulty_coefficient,
+            "question_type":          qt,
+            "content_text":           text,
+            "option_a":               a,
+            "option_b":               b,
+            "option_c":               c,
+            "option_d":               d,
+            "answer":                 ans,
+            "answer_explanation":     exp,
+            "scoring_criteria":       score
         })
     return result
 
-
 def fetch_jobs():
-    """
-    返回所有已存在的工种名称，list of str
-    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM jobs ORDER BY name")
     rows = cursor.fetchall()
     conn.close()
     return [row[0] for row in rows]
+
+def fetch_questions_by_codes(codes: list[str]):
+    if not codes:
+        return []
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in codes)
+    query = f"""
+        SELECT
+          recognition_code,
+          level_code,
+          question_type_code,
+          difficulty_coefficient,
+          question_type,
+          content_text,
+          option_a,
+          option_b,
+          option_c,
+          option_d,
+          answer,
+          answer_explanation,
+          scoring_criteria
+        FROM questions
+        WHERE recognition_code IN ({placeholders})
+    """
+    cursor.execute(query, codes)
+    rows = cursor.fetchall()
+    conn.close()
+
+    mapping = {}
+    for (rec_code, level_code, question_type_code, difficulty_coefficient,
+         qt, text, a, b, c, d, ans, exp, score) in rows:
+        mapping.setdefault(rec_code, []).append({
+            "recognition_code":       rec_code,
+            "level_code":             level_code,
+            "question_type_code":     question_type_code,
+            "difficulty_coefficient": difficulty_coefficient,
+            "question_type":          qt,
+            "content_text":           text,
+            "option_a":               a,
+            "option_b":               b,
+            "option_c":               c,
+            "option_d":               d,
+            "answer":                 ans,
+            "answer_explanation":     exp,
+            "scoring_criteria":       score
+        })
+
+    result = []
+    for code in codes:
+        items = mapping.get(code, [])
+        if items:
+            result.append(items[0])
+    return result
+
+def fetch_questions_by_ids(ids: list[int]):
+    """
+    根据 questions.id 列表查询详情，返回完整记录，并附带图片路径与公式图片路径。
+    """
+    if not ids:
+        return []
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in ids)
+
+    # 1) 查询主表字段
+    query = f"""
+        SELECT
+          id,
+          recognition_code,
+          level_code,
+          question_type_code,
+          difficulty_coefficient,
+          question_type,
+          content_text,
+          option_a,
+          option_b,
+          option_c,
+          option_d,
+          answer,
+          answer_explanation,
+          scoring_criteria
+        FROM questions
+        WHERE id IN ({placeholders})
+    """
+    cursor.execute(query, ids)
+    rows = cursor.fetchall()
+
+    # 2) 查询所有图片路径
+    cursor.execute(f"""
+        SELECT question_id, image_path
+        FROM question_images
+        WHERE question_id IN ({placeholders})
+    """, ids)
+    images_map = {}
+    for qid, path in cursor.fetchall():
+        images_map.setdefault(qid, []).append(path)
+
+    # 3) 查询所有公式“内容” —— 这里 content 实际就是你存的公式图片路径
+    cursor.execute(f"""
+        SELECT question_id, content
+        FROM question_formulas
+        WHERE question_id IN ({placeholders})
+    """, ids)
+    formulas_map = {}
+    for qid, content in cursor.fetchall():
+        formulas_map.setdefault(qid, []).append(content)
+
+    conn.close()
+
+    # 4) 组装结果
+    result = []
+    for (qid, rec_code, lvl_c, qt_c, diff, qt, text,
+         a, b, c, d, ans, exp, score) in rows:
+        result.append({
+            "id":                     qid,
+            "recognition_code":       rec_code,
+            "level_code":             lvl_c,
+            "question_type_code":     qt_c,
+            "difficulty_coefficient": diff,
+            "question_type":          qt,
+            "content_text":           text,
+            "option_a":               a,
+            "option_b":               b,
+            "option_c":               c,
+            "option_d":               d,
+            "answer":                 ans,
+            "answer_explanation":     exp,
+            "scoring_criteria":       score,
+            # 把查询到的两组路径放到这两个字段里
+            "image_paths":            images_map.get(qid, []),
+            "formula_image_paths":    formulas_map.get(qid, []),
+        })
+    return result
+

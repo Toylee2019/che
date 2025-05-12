@@ -1,5 +1,3 @@
-# parse_manager.py
-
 import os
 import logging
 
@@ -18,10 +16,12 @@ logging.basicConfig(
 import database.db_manager as db
 db.init_db()
 
-def process_document(file_path, level_id=1):
+def process_document(file_path, level_id=1, preview_signal=None):
     """
     解析 Word 文档，按题型分段并调用解析器，
     然后将题目与媒体写入数据库，返回写库汇总。
+    
+    preview_signal：用于发送实时预览的信号
     """
     if not os.path.exists(file_path):
         logging.error(f"文件不存在: {file_path}")
@@ -91,6 +91,11 @@ def process_document(file_path, level_id=1):
                 else:
                     db.insert_question_formula(qid, m['type'], m['content'])
                     logging.info(f"[INFO] 已写入公式：question_id={qid}, type={m['type']}")
+
+            # 如果提供了 preview_signal，则发送实时预览内容
+            if preview_signal:
+                preview_text = f"题目 {qid}: {qdict.get('content_text', '')[:50]}"  # 获取题目的前50个字符作为预览
+                preview_signal.emit(preview_text)  # 发出预览信号
 
     # 分题型写库
     write_items(sc_items)

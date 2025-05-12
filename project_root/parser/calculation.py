@@ -1,3 +1,5 @@
+# parser/calculation.py
+
 import re
 from parser.base_parser import BaseParser
 
@@ -50,11 +52,21 @@ def parse_block(q_unit, level_id, media_catalog=None):
     return question_dict, media_refs
 
 def parse(paragraphs, level_id=1, media_catalog=None):
+    """
+    解析计算题，并在出错时附带认定点编码。
+    """
     items, errors = [], []
     for idx, unit in enumerate(paragraphs):
+        # 预提取认定点编码
+        header = unit[0]
+        header_text = header.text if hasattr(header, 'text') else str(header)
+        m_code = re.search(r'\[T\]([A-Z]{2}\d{3})', header_text)
+        rec_code = m_code.group(1) if m_code else f"第{idx+1}题"
+
         try:
             qdict, media_refs = parse_block(unit, level_id, media_catalog)
             items.append((qdict, media_refs))
         except Exception as e:
-            errors.append(f"第{idx+1}题 解析错误: {e}")
+            errors.append(f"解析错误：计算题{rec_code} {e}")
+
     return items, errors
